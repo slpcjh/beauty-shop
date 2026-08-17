@@ -213,6 +213,19 @@ nav button.on{color:var(--rose);}
   flex:1; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px; background:var(--bg);
 }
 
+/* ── 바코드 스캔 ── */
+.search-row{display:flex; gap:8px; align-items:center; margin-bottom:10px;}
+.search-row .search-wrap{flex:1; margin-bottom:0;}
+.scan-round{
+  width:52px; height:52px; border-radius:50%; border:1.5px solid var(--line);
+  background:var(--card); font-size:22px; box-shadow:var(--shadow); flex:0 0 auto;
+}
+.scan-round:active{background:var(--rose-soft);}
+.more-btn{
+  width:100%; padding:13px; border-radius:12px; border:1.5px dashed var(--rose-mid);
+  background:transparent; color:var(--rose-dark); font-size:14.5px; font-weight:700; margin-top:4px;
+}
+
 /* ── 토스트 ── */
 #toast{
   position:fixed; bottom:calc(84px + env(safe-area-inset-bottom)); left:50%;
@@ -232,10 +245,13 @@ nav button.on{color:var(--rose);}
 
 <!-- 검색 화면 -->
 <section class="screen active" id="screen-search">
-  <div class="search-wrap">
-    <span class="icon">🔍</span>
-    <input type="search" id="searchInput" placeholder="상품명 검색 (예: shampoo, 또는 앞글자 ms)" autocomplete="off">
-    <button class="clear-btn" id="clearSearch">✕</button>
+  <div class="search-row">
+    <div class="search-wrap">
+      <span class="icon">🔍</span>
+      <input type="search" id="searchInput" placeholder="상품명 또는 바코드 검색" autocomplete="off">
+      <button class="clear-btn" id="clearSearch">✕</button>
+    </div>
+    <button class="scan-round" id="scanSearchBtn" title="바코드 스캔">📷</button>
   </div>
   <div class="chips" id="catChips"></div>
   <div class="count-line" id="resultCount"></div>
@@ -340,6 +356,13 @@ nav button.on{color:var(--rose);}
       </div>
     </div>
     <div class="field">
+      <label>바코드 (선택)</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="fBarcode" inputmode="numeric" placeholder="바코드 번호 입력 또는 📷 스캔" style="flex:1">
+        <button class="icon-btn" id="scanFormBtn" style="width:47px; height:47px; font-size:20px;">📷</button>
+      </div>
+    </div>
+    <div class="field">
       <label>메모 (선택)</label>
       <input type="text" id="fMemo" placeholder="예: 민감성 두피용, 인기상품">
     </div>
@@ -364,8 +387,21 @@ nav button.on{color:var(--rose);}
   </div>
 </div>
 
+<!-- 바코드 스캔 모달 -->
+<div class="modal-bg" id="scanModalBg">
+  <div class="modal">
+    <h2>📷 바코드 스캔</h2>
+    <p class="hint" style="margin:0 0 10px;">상품 바코드를 화면 가운데에 맞춰주세요.</p>
+    <div id="scanReader" style="width:100%; min-height:230px; border-radius:12px; overflow:hidden; background:#111;"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" id="scanCancel" style="flex:1">닫기</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
 import { getFirestore, initializeFirestore, persistentLocalCache, collection, doc, onSnapshot, setDoc, deleteDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
@@ -421,6 +457,7 @@ function matches(product, q){
   const cat = (product.cat||'').toLowerCase();
   const memo = (product.memo||'').toLowerCase();
   const ql = q.toLowerCase().replace(/\s/g,'');
+  if((product.barcode||'').includes(ql)) return true;
   if(name.replace(/\s/g,'').includes(ql) || cat.includes(ql) || memo.replace(/\s/g,'').includes(ql)) return true;
   if(/^[a-z]+$/.test(ql)){
     const initials = name.split(/[^a-z0-9]+/i).filter(Boolean).map(w=>w[0]).join('');
@@ -531,6 +568,8 @@ tabs.forEach(b => b.addEventListener('click', ()=>showTab(b.dataset.tab)));
 
 /* ───────── 검색 화면 ───────── */
 let currentCat = '전체';
+let searchLimit = 50;
+let manageLimit = 50;
 function categories(){
   const set = new Set(products.map(p=>p.cat).filter(Boolean));
   return ['전체', ...set];
@@ -547,7 +586,7 @@ function renderChips(){
   $('catChips').innerHTML = categories().map(c =>
     `<button class="chip ${c===currentCat?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('');
   $('catChips').querySelectorAll('.chip').forEach(ch =>
-    ch.addEventListener('click', ()=>{ currentCat = ch.dataset.cat; renderSearch(); }));
+    ch.addEventListener('click', ()=>{ currentCat = ch.dataset.cat; searchLimit = 50; renderSearch(); }));
 }
 function renderSearch(){
   renderChips();
@@ -559,13 +598,22 @@ function renderSearch(){
   $('resultCount').textContent = list.length ? `${list.length}개 상품` : '';
   $('headerCount').textContent = `상품 ${products.length}개`;
   if(!list.length){
+    const isBarcode = /^[0-9]{6,}$/.test(q.replace(/\s/g,''));
     $('productList').innerHTML = `<div class="empty"><div class="big">${loaded?'🔍':'⏳'}</div>${
       !loaded ? '서버에서 불러오는 중...' :
-      products.length ? '검색 결과가 없어요.<br>다른 이름으로 찾아보세요.' :
-      '아직 등록된 상품이 없어요.<br><b>상품 관리</b> 탭에서 상품을 등록해 보세요.'}</div>`;
+      products.length ? (isBarcode ? '이 바코드로 등록된 상품이 없어요.' : '검색 결과가 없어요.<br>다른 이름으로 찾아보세요.') :
+      '아직 등록된 상품이 없어요.<br><b>상품 관리</b> 탭에서 상품을 등록해 보세요.'}${
+      (loaded && isBarcode) ? `<div style="margin-top:14px"><button class="btn-primary" id="regFromScan">＋ 이 바코드로 새 상품 등록</button></div>` : ''}</div>`;
+    const rb = $('regFromScan');
+    if(rb) rb.addEventListener('click', ()=>{
+      if(!requireLogin()) return;
+      openProductModal(null);
+      $('fBarcode').value = q.replace(/\s/g,'');
+    });
     return;
   }
-  $('productList').innerHTML = list.map(p => `
+  const shown = list.slice(0, searchLimit);
+  $('productList').innerHTML = shown.map(p => `
     <div class="product-card">
       <div class="pc-top">
         <div class="pc-name">${esc(p.name)}</div>
@@ -578,12 +626,14 @@ function renderSearch(){
         <button class="map-link-btn" data-zone="${esc(p.zoneId)}">위치 보기</button>
       </div>
       ${p.memo ? `<div class="pc-memo">💬 ${esc(p.memo)}</div>` : ''}
-    </div>`).join('');
+    </div>`).join('') + (list.length > searchLimit ? `<button class="more-btn" id="moreSearchBtn">더 보기 (${list.length - searchLimit}개 남음)</button>` : '');
   $('productList').querySelectorAll('.map-link-btn').forEach(btn =>
     btn.addEventListener('click', ()=>{ showTab('map'); highlightZone(btn.dataset.zone); }));
+  const mb = $('moreSearchBtn');
+  if(mb) mb.addEventListener('click', ()=>{ searchLimit += 200; renderSearch(); });
 }
-$('searchInput').addEventListener('input', renderSearch);
-$('clearSearch').addEventListener('click', ()=>{ $('searchInput').value=''; renderSearch(); $('searchInput').focus(); });
+$('searchInput').addEventListener('input', ()=>{ searchLimit = 50; renderSearch(); });
+$('clearSearch').addEventListener('click', ()=>{ $('searchInput').value=''; searchLimit = 50; renderSearch(); $('searchInput').focus(); });
 
 /* ───────── 지도 화면 ───────── */
 let selectedZone = null;
@@ -626,16 +676,19 @@ let editingId = null;
 function renderManage(){
   const list = [...products].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
   $('manageCount').textContent = `(${list.length}개)`;
-  $('manageList').innerHTML = list.length ? list.map(p=>`
+  const shown = list.slice(0, manageLimit);
+  $('manageList').innerHTML = list.length ? shown.map(p=>`
     <div class="manage-row">
       <div class="info">
         <div class="n">${esc(p.name)}</div>
-        <div class="d">${won(p.price)} · 📍${esc(zoneName(p.zoneId))}${p.cat?' · '+esc(p.cat):''}${p.stock!==''&&p.stock!==null&&p.stock!==undefined?' · 재고 '+p.stock+'개':''}</div>
+        <div class="d">${won(p.price)} · 📍${esc(zoneName(p.zoneId))}${p.cat?' · '+esc(p.cat):''}${p.stock!==''&&p.stock!==null&&p.stock!==undefined?' · 재고 '+p.stock+'개':''}${p.barcode?' · 🏷️'+esc(p.barcode):''}</div>
       </div>
       <button class="icon-btn" data-edit="${esc(p.id)}">✏️</button>
       <button class="icon-btn del" data-del="${esc(p.id)}">🗑️</button>
-    </div>`).join('')
+    </div>`).join('') + (list.length > manageLimit ? `<button class="more-btn" id="moreManageBtn">더 보기 (${list.length - manageLimit}개 남음)</button>` : '')
     : `<div class="empty"><div class="big">📦</div>${loaded ? '위의 <b>새 상품 등록</b> 버튼으로<br>첫 상품을 등록해 보세요.' : '서버에서 불러오는 중...'}</div>`;
+  const mmb = $('moreManageBtn');
+  if(mmb) mmb.addEventListener('click', ()=>{ manageLimit += 200; renderManage(); });
   $('manageList').querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>{
     if(!requireLogin()) return;
     openProductModal(b.dataset.edit);
@@ -658,6 +711,7 @@ function openProductModal(id){
   $('fStock').value = p && p.stock!==''&&p.stock!==null&&p.stock!==undefined ? p.stock : '';
   $('fCat').value = p ? (p.cat||'') : '';
   $('fMemo').value = p ? (p.memo||'') : '';
+  $('fBarcode').value = p ? (p.barcode||'') : '';
   $('fZone').innerHTML = zones.map(z=>`<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('');
   if(p) $('fZone').value = p.zoneId;
   $('catList').innerHTML = [...new Set(products.map(x=>x.cat).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('');
@@ -674,12 +728,18 @@ $('productSave').addEventListener('click', async ()=>{
   if(price === '' || Number(price) < 0){ toast('가격을 입력해 주세요'); $('fPrice').focus(); return; }
   const stockVal = $('fStock').value === '' ? '' : Math.max(0, Number($('fStock').value));
   const id = editingId || uid();
+  const barcode = $('fBarcode').value.trim();
+  if(barcode){
+    const dup = products.find(x=>x.barcode===barcode && x.id!==id);
+    if(dup){ toast(`같은 바코드 상품이 이미 있어요: ${dup.name}`); $('fBarcode').focus(); return; }
+  }
   const item = {
     name, cat: $('fCat').value.trim(),
     price: Number(price),
     stock: stockVal,
     zoneId: $('fZone').value,
-    memo: $('fMemo').value.trim()
+    memo: $('fMemo').value.trim(),
+    barcode
   };
   $('productSave').disabled = true;
   try{
@@ -752,13 +812,16 @@ function legacyData(){
 function hasLegacyData(){ return !!legacyData(); }
 
 async function bulkWrite(zonesList, productList){
-  const batch = writeBatch(db);
-  productList.forEach(p=>{
-    const {id, ...rest} = p;
-    batch.set(doc(db,'products', id || uid()), rest);
-  });
-  if(zonesList && zonesList.length) batch.set(doc(db,'meta','zones'), { list: zonesList });
-  await batch.commit();
+  const CHUNK = 450;
+  for(let i = 0; i < productList.length; i += CHUNK){
+    const batch = writeBatch(db);
+    productList.slice(i, i+CHUNK).forEach(p=>{
+      const {id, ...rest} = p;
+      batch.set(doc(db,'products', id || uid()), rest);
+    });
+    if(i === 0 && zonesList && zonesList.length) batch.set(doc(db,'meta','zones'), { list: zonesList });
+    await batch.commit();
+  }
 }
 
 $('exportBtn').addEventListener('click', ()=>{
@@ -808,9 +871,7 @@ $('clearSampleBtn').addEventListener('click', async ()=>{
   if(!samples.length){ toast('샘플 상품이 없어요'); return; }
   if(confirm(`연습용 샘플 상품 ${samples.length}개를 지울까요?`)){
     try{
-      const batch = writeBatch(db);
-      samples.forEach(p=>batch.delete(doc(db,'products',p.id)));
-      await batch.commit();
+      await bulkDelete(samples.map(p=>p.id));
       toast('샘플을 지웠어요');
     }catch(e){ toast(writeErrorMsg(e)); }
   }
@@ -819,15 +880,69 @@ $('resetBtn').addEventListener('click', async ()=>{
   if(!requireLogin()) return;
   if(confirm('정말 모든 상품과 구역을 지우고 처음 상태로 되돌릴까요?\n(백업 파일을 먼저 저장해 두는 것을 추천해요)')){
     try{
-      const batch = writeBatch(db);
-      products.forEach(p=>batch.delete(doc(db,'products',p.id)));
-      batch.set(doc(db,'meta','zones'), { list: DEFAULT_ZONES });
-      await batch.commit();
+      await bulkDelete(products.map(p=>p.id));
+      await setDoc(doc(db,'meta','zones'), { list: DEFAULT_ZONES });
       selectedZone = null; currentCat = '전체';
       toast('초기화했어요');
     }catch(e){ toast(writeErrorMsg(e)); }
   }
 });
+
+async function bulkDelete(ids){
+  const CHUNK = 450;
+  for(let i = 0; i < ids.length; i += CHUNK){
+    const batch = writeBatch(db);
+    ids.slice(i, i+CHUNK).forEach(id=>batch.delete(doc(db,'products',id)));
+    await batch.commit();
+  }
+}
+
+/* ───────── 카메라 바코드 스캔 ───────── */
+let scanner = null, scanTarget = null, scanBusy = false;
+async function openScan(target){
+  if(typeof Html5Qrcode === 'undefined'){ toast('카메라 스캔 기능을 불러오지 못했어요. 인터넷 연결을 확인해 주세요'); return; }
+  scanTarget = target;
+  scanBusy = false;
+  $('scanModalBg').classList.add('open');
+  try{
+    scanner = new Html5Qrcode('scanReader');
+    await scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 260, height: 140 } },
+      code => { onScanned(code); },
+      () => {}
+    );
+  }catch(e){
+    console.error(e);
+    await closeScan();
+    toast('카메라를 열 수 없어요. 카메라 권한을 허용해 주세요');
+  }
+}
+async function closeScan(){
+  $('scanModalBg').classList.remove('open');
+  if(scanner){
+    const s = scanner; scanner = null;
+    try{ await s.stop(); s.clear(); }catch(e){}
+  }
+}
+function onScanned(code){
+  if(scanBusy) return;
+  scanBusy = true;
+  closeScan();
+  if(navigator.vibrate) try{ navigator.vibrate(80); }catch(e){}
+  if(scanTarget === 'form'){
+    $('fBarcode').value = code;
+  }else{
+    showTab('search');
+    $('searchInput').value = code;
+    searchLimit = 50;
+    renderSearch();
+  }
+}
+$('scanSearchBtn').addEventListener('click', ()=>openScan('search'));
+$('scanFormBtn').addEventListener('click', ()=>openScan('form'));
+$('scanCancel').addEventListener('click', closeScan);
+$('scanModalBg').addEventListener('click', e=>{ if(e.target === $('scanModalBg')) closeScan(); });
 
 /* ───────── 시작 ───────── */
 renderSearch();
