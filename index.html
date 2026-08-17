@@ -227,7 +227,7 @@ nav button.on{color:var(--rose);}
 <body>
 
 <header>
-  <h1>💄 뷰티샵 도우미 <span class="sub" id="headerCount"></span></h1>
+  <h1>💄 뷰티샵 도우미 <span class="sub" id="headerCount"></span><span class="sub" id="authState" style="margin-left:8px"></span></h1>
 </header>
 
 <!-- 검색 화면 -->
@@ -264,14 +264,25 @@ nav button.on{color:var(--rose);}
 
 <!-- 설정 화면 -->
 <section class="screen" id="screen-settings">
-  <div class="storage-note" id="storageNote">
-    ⚠️ 지금 화면에서는 자동 저장이 안 되는 환경이에요. 아래 <b>백업 파일 저장</b>으로 데이터를 꼭 보관해 주세요. 휴대폰 인터넷 브라우저(사파리/크롬)에서 이 파일을 열면 자동 저장돼요.
+  <div class="settings-card" id="loginCard">
+    <h3>👤 직원 로그인</h3>
+    <div id="loginForm">
+      <p>상품 등록·수정·삭제는 로그인해야 할 수 있어요. 검색과 지도 보기는 로그인 없이도 돼요.</p>
+      <div class="field"><label>이메일</label><input type="email" id="loginEmail" placeholder="이메일 주소" autocomplete="username"></div>
+      <div class="field"><label>비밀번호</label><input type="password" id="loginPw" placeholder="비밀번호" autocomplete="current-password"></div>
+      <button class="btn-primary" id="loginBtn">로그인</button>
+    </div>
+    <div id="logoutBox" style="display:none">
+      <p id="whoami" style="font-weight:700; color:var(--green);"></p>
+      <button class="btn-line" id="logoutBtn">로그아웃</button>
+    </div>
   </div>
   <div class="settings-card">
     <h3>📂 데이터 백업</h3>
-    <p>상품 데이터를 파일로 저장해두면, 휴대폰을 바꾸거나 실수로 지워도 다시 불러올 수 있어요. 일주일에 한 번 정도 백업해두시는 걸 추천해요.</p>
+    <p>이제 데이터는 서버에 저장되어 모든 기기에서 똑같이 보여요. 그래도 만약을 대비해 가끔 백업 파일을 저장해두시는 걸 추천해요.</p>
     <button class="btn-line" id="exportBtn">💾 백업 파일 저장 (내보내기)</button>
-    <button class="btn-line" id="importBtn">📥 백업 파일 불러오기</button>
+    <button class="btn-line" id="importBtn">📥 백업 파일 불러오기 (덮어쓰기)</button>
+    <button class="btn-line" id="migrateBtn" style="display:none">⬆️ 이 기기에 저장된 예전 데이터 서버로 올리기</button>
     <input type="file" id="importFile" accept=".json,application/json" style="display:none">
   </div>
   <div class="settings-card">
@@ -355,52 +366,39 @@ nav button.on{color:var(--rose);}
 
 <div id="toast"></div>
 
-<script>
-'use strict';
-/* ───────── 저장소 (휴대폰 브라우저에서는 자동 저장, 미지원 환경은 메모리+백업파일) ───────── */
-const STORE_KEY = 'beautyShopData_v1';
-let memoryStore = null;
-const storage = {
-  ok: false,
-  load(){
-    try{
-      const raw = localStorage.getItem(STORE_KEY);
-      this.ok = true;
-      return raw ? JSON.parse(raw) : null;
-    }catch(e){ this.ok = false; return memoryStore; }
-  },
-  save(data){
-    memoryStore = data;
-    try{ localStorage.setItem(STORE_KEY, JSON.stringify(data)); this.ok = true; }
-    catch(e){ this.ok = false; }
-  }
-};
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
+import { getFirestore, initializeFirestore, persistentLocalCache, collection, doc, onSnapshot, setDoc, deleteDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
 
-/* ───────── 기본 데이터 ───────── */
-function defaultData(){
-  return {
-    zones:[
-      {id:'z1', name:'진열대 A'},
-      {id:'z2', name:'진열대 B'},
-      {id:'z3', name:'진열대 C'},
-      {id:'z4', name:'벽면 선반'},
-      {id:'z5', name:'카운터 옆'},
-      {id:'z6', name:'창고'}
-    ],
-    products:[
-      {id:'p1', name:'Moisture Shampoo 500ml',  cat:'헤어', price:12, stock:8,  zoneId:'z1', memo:'', sample:true},
-      {id:'p2', name:'Protein Treatment',        cat:'헤어', price:15, stock:5,  zoneId:'z1', memo:'손상모발용', sample:true},
-      {id:'p3', name:'Herb Hair Color (Brown)',  cat:'염색', price:9,  stock:12, zoneId:'z2', memo:'', sample:true},
-      {id:'p4', name:'Hydra Mask Pack (10ea)',   cat:'스킨케어', price:10, stock:20, zoneId:'z3', memo:'인기상품', sample:true},
-      {id:'p5', name:'Aloe Soothing Gel',        cat:'스킨케어', price:7,  stock:3,  zoneId:'z3', memo:'', sample:true},
-      {id:'p6', name:'Nail Strengthener',        cat:'네일', price:6,  stock:0,  zoneId:'z5', memo:'주문 필요', sample:true},
-      {id:'p7', name:'Hair Essence Oil',         cat:'헤어', price:18, stock:6,  zoneId:'z4', memo:'', sample:true}
-    ]
-  };
-}
-let data = storage.load() || defaultData();
-if(!data.zones || !data.products){ data = defaultData(); }
-function persist(){ storage.save(data); }
+/* ───────── Firebase 연결 ───────── */
+const firebaseConfig = {
+  apiKey: "AIzaSyA9JLB2mDA5F2fDb_byKmpRYmZuTk_Zv4U",
+  authDomain: "beauty-shop-b3b14.firebaseapp.com",
+  projectId: "beauty-shop-b3b14",
+  storageBucket: "beauty-shop-b3b14.firebasestorage.app",
+  messagingSenderId: "1099366920595",
+  appId: "1:1099366920595:web:58144898dfa040da2cb866"
+};
+const fbApp = initializeApp(firebaseConfig);
+let db;
+try { db = initializeFirestore(fbApp, { localCache: persistentLocalCache() }); }
+catch(e){ db = getFirestore(fbApp); }
+const auth = getAuth(fbApp);
+
+/* ───────── 상태 ───────── */
+const DEFAULT_ZONES = [
+  {id:'z1', name:'진열대 A'},
+  {id:'z2', name:'진열대 B'},
+  {id:'z3', name:'진열대 C'},
+  {id:'z4', name:'벽면 선반'},
+  {id:'z5', name:'카운터 옆'},
+  {id:'z6', name:'창고'}
+];
+let products = [];
+let zones = DEFAULT_ZONES.map(z=>({...z}));
+let currentUser = null;
+let loaded = false;
 
 /* ───────── 초성 검색 ───────── */
 const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
@@ -424,14 +422,11 @@ function matches(product, q){
   const memo = (product.memo||'').toLowerCase();
   const ql = q.toLowerCase().replace(/\s/g,'');
   if(name.replace(/\s/g,'').includes(ql) || cat.includes(ql) || memo.replace(/\s/g,'').includes(ql)) return true;
-  // 영어 앞글자 검색: "ms" → "Moisture Shampoo"
   if(/^[a-z]+$/.test(ql)){
     const initials = name.split(/[^a-z0-9]+/i).filter(Boolean).map(w=>w[0]).join('');
     if(initials.includes(ql)) return true;
-    // 각 단어의 시작 부분 매칭: "sham" → "moisture shampoo"
     if(name.split(/[^a-z0-9]+/i).some(w=>w.startsWith(ql))) return true;
   }
-  // 한글 초성 검색 (메모 등 한글 입력용)
   if(isChosungQuery(ql)){
     return toChosung(product.name + ' ' + (product.memo||'')).replace(/[^ㄱ-ㅎ]/g,'').includes(ql);
   }
@@ -441,14 +436,85 @@ function matches(product, q){
 /* ───────── 유틸 ───────── */
 const $ = id => document.getElementById(id);
 const won = n => '$' + (Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
-function uid(){ return 'p' + Math.random().toString(36).slice(2,9) + performance.now().toString(36).replace('.',''); }
-function zoneName(id){ const z = data.zones.find(z=>z.id===id); return z ? z.name : '위치 미정'; }
+function uid(){ return 'p' + Math.random().toString(36).slice(2,9) + Date.now().toString(36); }
+function zoneName(id){ const z = zones.find(z=>z.id===id); return z ? z.name : '위치 미정'; }
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 let toastTimer = null;
 function toast(msg){
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2000);
 }
+function authErrorMsg(e){
+  const c = e && e.code || '';
+  if(c.includes('invalid-credential')||c.includes('wrong-password')||c.includes('user-not-found')) return '이메일 또는 비밀번호가 맞지 않아요';
+  if(c.includes('invalid-email')) return '이메일 형식이 맞지 않아요';
+  if(c.includes('network')) return '인터넷 연결을 확인해 주세요';
+  if(c.includes('too-many-requests')) return '시도가 너무 많았어요. 잠시 후 다시 해주세요';
+  return '로그인에 실패했어요';
+}
+function writeErrorMsg(e){
+  const c = e && e.code || '';
+  if(c.includes('permission-denied')) return '수정 권한이 없어요. 로그인 상태를 확인해 주세요';
+  if(c.includes('unavailable')) return '인터넷 연결을 확인해 주세요';
+  return '저장에 실패했어요. 다시 시도해 주세요';
+}
+
+/* ───────── 서버 실시간 동기화 ───────── */
+onSnapshot(collection(db,'products'), snap => {
+  products = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  loaded = true;
+  rerender();
+}, err => { console.error(err); toast('서버 연결에 문제가 있어요'); });
+
+onSnapshot(doc(db,'meta','zones'), snap => {
+  if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+    zones = snap.data().list;
+  }
+  rerender();
+}, err => { console.error(err); });
+
+function activeTab(){
+  const b = document.querySelector('nav button.on');
+  return b ? b.dataset.tab : 'search';
+}
+function rerender(){
+  const t = activeTab();
+  if(t==='search') renderSearch();
+  else if(t==='map') renderMap();
+  else if(t==='manage') renderManage();
+  $('headerCount').textContent = `상품 ${products.length}개`;
+}
+
+/* ───────── 로그인 ───────── */
+function requireLogin(){
+  if(currentUser) return true;
+  toast('로그인이 필요해요 — 설정 탭에서 로그인하세요');
+  showTab('settings');
+  setTimeout(()=>{ const el=$('loginEmail'); if(el) el.focus(); }, 200);
+  return false;
+}
+function updateAuthUI(){
+  const on = !!currentUser;
+  $('loginForm').style.display = on ? 'none' : 'block';
+  $('logoutBox').style.display = on ? 'block' : 'none';
+  if(on) $('whoami').textContent = '✅ ' + (currentUser.email||'') + ' 로 로그인됨';
+  $('authState').textContent = on ? '🔓 ' + (currentUser.email||'').split('@')[0] : '';
+  $('migrateBtn').style.display = (on && hasLegacyData()) ? 'block' : 'none';
+}
+onAuthStateChanged(auth, u => { currentUser = u; updateAuthUI(); });
+$('loginBtn').addEventListener('click', async ()=>{
+  const em = $('loginEmail').value.trim(), pw = $('loginPw').value;
+  if(!em || !pw){ toast('이메일과 비밀번호를 입력해 주세요'); return; }
+  $('loginBtn').disabled = true;
+  try{
+    await signInWithEmailAndPassword(auth, em, pw);
+    $('loginPw').value = '';
+    toast('로그인했어요');
+  }catch(e){ toast(authErrorMsg(e)); }
+  $('loginBtn').disabled = false;
+});
+$('loginPw').addEventListener('keydown', e=>{ if(e.key==='Enter') $('loginBtn').click(); });
+$('logoutBtn').addEventListener('click', async ()=>{ await signOut(auth); toast('로그아웃했어요'); });
 
 /* ───────── 탭 전환 ───────── */
 const tabs = document.querySelectorAll('nav button');
@@ -459,7 +525,6 @@ function showTab(name){
   if(name==='map') renderMap();
   if(name==='manage') renderManage();
   if(name==='search') renderSearch();
-  if(name==='settings') $('storageNote').style.display = storage.ok ? 'none' : 'block';
   window.scrollTo(0,0);
 }
 tabs.forEach(b => b.addEventListener('click', ()=>showTab(b.dataset.tab)));
@@ -467,7 +532,7 @@ tabs.forEach(b => b.addEventListener('click', ()=>showTab(b.dataset.tab)));
 /* ───────── 검색 화면 ───────── */
 let currentCat = '전체';
 function categories(){
-  const set = new Set(data.products.map(p=>p.cat).filter(Boolean));
+  const set = new Set(products.map(p=>p.cat).filter(Boolean));
   return ['전체', ...set];
 }
 function stockBadge(p){
@@ -478,7 +543,7 @@ function stockBadge(p){
   return `<span class="badge">재고 ${s}개</span>`;
 }
 function renderChips(){
-  const q = $('searchInput').value;
+  if(!categories().includes(currentCat)) currentCat = '전체';
   $('catChips').innerHTML = categories().map(c =>
     `<button class="chip ${c===currentCat?'on':''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('');
   $('catChips').querySelectorAll('.chip').forEach(ch =>
@@ -488,14 +553,15 @@ function renderSearch(){
   renderChips();
   const q = $('searchInput').value.trim();
   $('clearSearch').style.display = q ? 'block' : 'none';
-  let list = data.products.filter(p => matches(p,q));
+  let list = products.filter(p => matches(p,q));
   if(currentCat !== '전체') list = list.filter(p => p.cat === currentCat);
   list.sort((a,b)=>a.name.localeCompare(b.name,'ko'));
   $('resultCount').textContent = list.length ? `${list.length}개 상품` : '';
-  $('headerCount').textContent = `상품 ${data.products.length}개`;
+  $('headerCount').textContent = `상품 ${products.length}개`;
   if(!list.length){
-    $('productList').innerHTML = `<div class="empty"><div class="big">🔍</div>${
-      data.products.length ? '검색 결과가 없어요.<br>다른 이름으로 찾아보세요.' :
+    $('productList').innerHTML = `<div class="empty"><div class="big">${loaded?'🔍':'⏳'}</div>${
+      !loaded ? '서버에서 불러오는 중...' :
+      products.length ? '검색 결과가 없어요.<br>다른 이름으로 찾아보세요.' :
       '아직 등록된 상품이 없어요.<br><b>상품 관리</b> 탭에서 상품을 등록해 보세요.'}</div>`;
     return;
   }
@@ -522,8 +588,8 @@ $('clearSearch').addEventListener('click', ()=>{ $('searchInput').value=''; rend
 /* ───────── 지도 화면 ───────── */
 let selectedZone = null;
 function renderMap(){
-  $('mapGrid').innerHTML = data.zones.map(z => {
-    const count = data.products.filter(p=>p.zoneId===z.id).length;
+  $('mapGrid').innerHTML = zones.map(z => {
+    const count = products.filter(p=>p.zoneId===z.id).length;
     return `<div class="zone-block ${selectedZone===z.id?'selected':''}" data-zone="${esc(z.id)}">
       <div class="z-name">${esc(z.name)}</div>
       <div class="z-count">${count ? count+'개 상품' : '비어있음'}</div>
@@ -539,11 +605,11 @@ function selectZone(zid){
   renderZonePanel(zid);
 }
 function renderZonePanel(zid){
-  const items = data.products.filter(p=>p.zoneId===zid).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+  const items = products.filter(p=>p.zoneId===zid).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
   const panel = $('zonePanel');
   panel.querySelector('h3').innerHTML = `📍 ${esc(zoneName(zid))} <span class="badge zone">${items.length}개 상품</span>`;
   $('zoneProducts').innerHTML = items.length
-    ? items.map(p=>`<div class="zp-item"><span>${esc(p.name)} ${Number(p.stock)<=0 && p.stock!=='' ? '<span class="badge stock-zero">품절</span>':''}</span><span class="p">${won(p.price)}</span></div>`).join('')
+    ? items.map(p=>`<div class="zp-item"><span>${esc(p.name)} ${Number(p.stock)<=0 && p.stock!=='' && p.stock!==null && p.stock!==undefined ? '<span class="badge stock-zero">품절</span>':''}</span><span class="p">${won(p.price)}</span></div>`).join('')
     : '<div class="hint" style="margin:0;">이 구역에는 아직 상품이 없어요.</div>';
 }
 function highlightZone(zid){
@@ -558,7 +624,7 @@ function highlightZone(zid){
 /* ───────── 상품 관리 ───────── */
 let editingId = null;
 function renderManage(){
-  const list = [...data.products].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+  const list = [...products].sort((a,b)=>a.name.localeCompare(b.name,'ko'));
   $('manageCount').textContent = `(${list.length}개)`;
   $('manageList').innerHTML = list.length ? list.map(p=>`
     <div class="manage-row">
@@ -569,68 +635,73 @@ function renderManage(){
       <button class="icon-btn" data-edit="${esc(p.id)}">✏️</button>
       <button class="icon-btn del" data-del="${esc(p.id)}">🗑️</button>
     </div>`).join('')
-    : `<div class="empty"><div class="big">📦</div>위의 <b>새 상품 등록</b> 버튼으로<br>첫 상품을 등록해 보세요.</div>`;
-  $('manageList').querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>openProductModal(b.dataset.edit)));
-  $('manageList').querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
-    const p = data.products.find(x=>x.id===b.dataset.del);
+    : `<div class="empty"><div class="big">📦</div>${loaded ? '위의 <b>새 상품 등록</b> 버튼으로<br>첫 상품을 등록해 보세요.' : '서버에서 불러오는 중...'}</div>`;
+  $('manageList').querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>{
+    if(!requireLogin()) return;
+    openProductModal(b.dataset.edit);
+  }));
+  $('manageList').querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
+    if(!requireLogin()) return;
+    const p = products.find(x=>x.id===b.dataset.del);
     if(p && confirm(`'${p.name}' 상품을 삭제할까요?`)){
-      data.products = data.products.filter(x=>x.id!==b.dataset.del);
-      persist(); renderManage(); toast('삭제했어요');
+      try{ await deleteDoc(doc(db,'products',b.dataset.del)); toast('삭제했어요'); }
+      catch(e){ toast(writeErrorMsg(e)); }
     }
   }));
 }
 function openProductModal(id){
   editingId = id || null;
-  const p = id ? data.products.find(x=>x.id===id) : null;
+  const p = id ? products.find(x=>x.id===id) : null;
   $('productModalTitle').textContent = p ? '상품 수정' : '새 상품 등록';
   $('fName').value = p ? p.name : '';
   $('fPrice').value = p ? p.price : '';
   $('fStock').value = p && p.stock!==''&&p.stock!==null&&p.stock!==undefined ? p.stock : '';
   $('fCat').value = p ? (p.cat||'') : '';
   $('fMemo').value = p ? (p.memo||'') : '';
-  $('fZone').innerHTML = data.zones.map(z=>`<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('');
+  $('fZone').innerHTML = zones.map(z=>`<option value="${esc(z.id)}">${esc(z.name)}</option>`).join('');
   if(p) $('fZone').value = p.zoneId;
-  $('catList').innerHTML = [...new Set(data.products.map(x=>x.cat).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('');
+  $('catList').innerHTML = [...new Set(products.map(x=>x.cat).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('');
   $('productModalBg').classList.add('open');
   if(!p) setTimeout(()=>$('fName').focus(), 100);
 }
-$('addProductBtn').addEventListener('click', ()=>openProductModal(null));
+$('addProductBtn').addEventListener('click', ()=>{ if(requireLogin()) openProductModal(null); });
 $('productCancel').addEventListener('click', ()=>$('productModalBg').classList.remove('open'));
-$('productSave').addEventListener('click', ()=>{
+$('productSave').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
   const name = $('fName').value.trim();
   const price = $('fPrice').value;
   if(!name){ toast('상품명을 입력해 주세요'); $('fName').focus(); return; }
   if(price === '' || Number(price) < 0){ toast('가격을 입력해 주세요'); $('fPrice').focus(); return; }
   const stockVal = $('fStock').value === '' ? '' : Math.max(0, Number($('fStock').value));
+  const id = editingId || uid();
   const item = {
-    id: editingId || uid(),
     name, cat: $('fCat').value.trim(),
     price: Number(price),
     stock: stockVal,
     zoneId: $('fZone').value,
     memo: $('fMemo').value.trim()
   };
-  if(editingId){
-    const i = data.products.findIndex(x=>x.id===editingId);
-    if(i>-1) data.products[i] = {...data.products[i], ...item, sample:false};
-    toast('수정했어요');
-  }else{
-    data.products.push(item);
-    toast('등록했어요');
-  }
-  persist();
-  $('productModalBg').classList.remove('open');
-  renderManage();
+  $('productSave').disabled = true;
+  try{
+    await setDoc(doc(db,'products',id), item);
+    toast(editingId ? '수정했어요' : '등록했어요');
+    $('productModalBg').classList.remove('open');
+  }catch(e){ toast(writeErrorMsg(e)); }
+  $('productSave').disabled = false;
 });
 
 /* ───────── 구역 관리 ───────── */
 let zoneDraft = [];
+async function saveZones(list){
+  await setDoc(doc(db,'meta','zones'), { list });
+}
 $('zoneManageBtn').addEventListener('click', ()=>{
-  zoneDraft = data.zones.map(z=>({...z}));
+  if(!requireLogin()) return;
+  zoneDraft = zones.map(z=>({...z}));
   renderZoneEdit();
   $('zoneModalBg').classList.add('open');
 });
-function zoneInUse(zid){ return data.products.some(p=>p.zoneId===zid); }
+function zoneInUse(zid){ return products.some(p=>p.zoneId===zid); }
 function renderZoneEdit(){
   $('zoneEditList').innerHTML = zoneDraft.map((z,i)=>`
     <div class="zone-edit-row">
@@ -651,70 +722,114 @@ $('zoneAddBtn').addEventListener('click', ()=>{
   renderZoneEdit();
 });
 $('zoneCancel').addEventListener('click', ()=>$('zoneModalBg').classList.remove('open'));
-$('zoneSave').addEventListener('click', ()=>{
+$('zoneSave').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
   const cleaned = zoneDraft.map(z=>({...z, name:z.name.trim()})).filter(z=>z.name);
   if(!cleaned.length){ toast('구역이 최소 1개는 필요해요'); return; }
-  data.zones = cleaned;
-  persist();
-  $('zoneModalBg').classList.remove('open');
-  selectedZone = null;
-  renderMap(); toast('구역을 저장했어요');
+  try{
+    await saveZones(cleaned);
+    $('zoneModalBg').classList.remove('open');
+    selectedZone = null;
+    toast('구역을 저장했어요');
+  }catch(e){ toast(writeErrorMsg(e)); }
 });
 
 /* 모달 바깥 클릭 시 닫기 */
-[['productModalBg'],['zoneModalBg']].forEach(([id])=>{
+['productModalBg','zoneModalBg'].forEach(id=>{
   $(id).addEventListener('click', e=>{ if(e.target === $(id)) $(id).classList.remove('open'); });
 });
 
-/* ───────── 백업 / 초기화 ───────── */
+/* ───────── 백업 / 예전 데이터 옮기기 / 초기화 ───────── */
+const LEGACY_KEY = 'beautyShopData_v1';
+function legacyData(){
+  try{
+    const raw = localStorage.getItem(LEGACY_KEY);
+    if(!raw) return null;
+    const d = JSON.parse(raw);
+    return (d && Array.isArray(d.products) && d.products.length) ? d : null;
+  }catch(e){ return null; }
+}
+function hasLegacyData(){ return !!legacyData(); }
+
+async function bulkWrite(zonesList, productList){
+  const batch = writeBatch(db);
+  productList.forEach(p=>{
+    const {id, ...rest} = p;
+    batch.set(doc(db,'products', id || uid()), rest);
+  });
+  if(zonesList && zonesList.length) batch.set(doc(db,'meta','zones'), { list: zonesList });
+  await batch.commit();
+}
+
 $('exportBtn').addEventListener('click', ()=>{
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({zones, products}, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   const d = new Date();
-  a.download = `뷰티샵백업_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+  a.download = `beautyshop_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   toast('백업 파일을 저장했어요');
 });
-$('importBtn').addEventListener('click', ()=>$('importFile').click());
+$('importBtn').addEventListener('click', ()=>{ if(requireLogin()) $('importFile').click(); });
 $('importFile').addEventListener('change', e=>{
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = ()=>{
+  reader.onload = async ()=>{
     try{
       const parsed = JSON.parse(reader.result);
       if(!parsed.zones || !parsed.products) throw new Error('bad');
-      data = parsed;
-      persist();
-      selectedZone = null; currentCat = '전체';
-      renderSearch(); toast('백업을 불러왔어요');
-      showTab('search');
-    }catch(err){ toast('올바른 백업 파일이 아니에요'); }
+      if(!confirm(`백업에 있는 상품 ${parsed.products.length}개를 서버에 올릴까요? 같은 상품은 백업 내용으로 바뀌어요.`)) return;
+      await bulkWrite(parsed.zones, parsed.products);
+      toast('백업을 서버에 올렸어요');
+    }catch(err){
+      toast(err && err.code ? writeErrorMsg(err) : '올바른 백업 파일이 아니에요');
+    }
   };
   reader.readAsText(file);
   e.target.value = '';
 });
-$('clearSampleBtn').addEventListener('click', ()=>{
-  const n = data.products.filter(p=>p.sample).length;
-  if(!n){ toast('샘플 상품이 없어요'); return; }
-  if(confirm(`연습용 샘플 상품 ${n}개를 지울까요?`)){
-    data.products = data.products.filter(p=>!p.sample);
-    persist(); renderSearch(); toast('샘플을 지웠어요');
+$('migrateBtn').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
+  const d = legacyData();
+  if(!d){ toast('옮길 데이터가 없어요'); return; }
+  if(!confirm(`이 기기에 저장돼 있던 상품 ${d.products.length}개를 서버로 올릴까요?`)) return;
+  try{
+    await bulkWrite(d.zones||[], d.products);
+    localStorage.removeItem(LEGACY_KEY);
+    updateAuthUI();
+    toast('서버로 옮겼어요');
+  }catch(e){ toast(writeErrorMsg(e)); }
+});
+$('clearSampleBtn').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
+  const samples = products.filter(p=>p.sample);
+  if(!samples.length){ toast('샘플 상품이 없어요'); return; }
+  if(confirm(`연습용 샘플 상품 ${samples.length}개를 지울까요?`)){
+    try{
+      const batch = writeBatch(db);
+      samples.forEach(p=>batch.delete(doc(db,'products',p.id)));
+      await batch.commit();
+      toast('샘플을 지웠어요');
+    }catch(e){ toast(writeErrorMsg(e)); }
   }
 });
-$('resetBtn').addEventListener('click', ()=>{
+$('resetBtn').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
   if(confirm('정말 모든 상품과 구역을 지우고 처음 상태로 되돌릴까요?\n(백업 파일을 먼저 저장해 두는 것을 추천해요)')){
-    data = defaultData();
-    data.products = [];
-    persist(); selectedZone = null; currentCat = '전체';
-    renderSearch(); toast('초기화했어요');
+    try{
+      const batch = writeBatch(db);
+      products.forEach(p=>batch.delete(doc(db,'products',p.id)));
+      batch.set(doc(db,'meta','zones'), { list: DEFAULT_ZONES });
+      await batch.commit();
+      selectedZone = null; currentCat = '전체';
+      toast('초기화했어요');
+    }catch(e){ toast(writeErrorMsg(e)); }
   }
 });
 
 /* ───────── 시작 ───────── */
-storage.save(data); // 저장 가능 여부 확인 겸 첫 저장
 renderSearch();
 
 </script>
