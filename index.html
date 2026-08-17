@@ -213,6 +213,18 @@ nav button.on{color:var(--rose);}
   flex:1; padding:11px 12px; border:1.5px solid var(--line); border-radius:10px; background:var(--bg);
 }
 
+/* ── 매장 선택 ── */
+#storeBtn{
+  border:none; background:none; color:#fff; font:inherit; font-weight:800;
+  display:flex; align-items:center; gap:6px; padding:0; letter-spacing:-.3px;
+}
+.store-btn{
+  display:block; width:100%; padding:15px 16px; border-radius:12px;
+  border:1.5px solid var(--line); background:var(--bg); font-size:16px;
+  font-weight:700; margin-bottom:8px; text-align:left; color:var(--ink);
+}
+.store-btn.on{border-color:var(--rose); background:var(--rose-soft); color:var(--rose-dark);}
+
 /* ── 바코드 스캔 ── */
 .search-row{display:flex; gap:8px; align-items:center; margin-bottom:10px;}
 .search-row .search-wrap{flex:1; margin-bottom:0;}
@@ -240,7 +252,7 @@ nav button.on{color:var(--rose);}
 <body>
 
 <header>
-  <h1>💄 뷰티샵 도우미 <span class="sub" id="headerCount"></span><span class="sub" id="authState" style="margin-left:8px"></span></h1>
+  <h1><button id="storeBtn">💄 <span id="storeName">매장</span> <span style="font-size:11px; opacity:.85;">▼</span></button><span class="sub" id="headerCount"></span><span class="sub" id="authState" style="margin-left:8px"></span></h1>
 </header>
 
 <!-- 검색 화면 -->
@@ -387,6 +399,27 @@ nav button.on{color:var(--rose);}
   </div>
 </div>
 
+<!-- 매장 선택 모달 -->
+<div class="modal-bg" id="storeModalBg">
+  <div class="modal">
+    <h2>🏬 매장 선택</h2>
+    <div id="storeList"></div>
+    <div id="storeEditWrap" style="display:none">
+      <p class="hint" style="margin:0 0 10px;">매장 이름을 수정하세요. 상품 데이터는 그대로 유지돼요.</p>
+      <div id="storeEditList"></div>
+      <button class="btn-line" id="storeAddBtn" style="margin-top:4px;">＋ 매장 추가</button>
+    </div>
+    <div class="modal-btns" id="storeViewBtns">
+      <button class="btn-cancel" id="storeClose" style="flex:1">닫기</button>
+      <button class="btn-cancel" id="storeEditBtn" style="flex:1; background:var(--rose-soft); color:var(--rose-dark);">✏️ 이름 관리</button>
+    </div>
+    <div class="modal-btns" id="storeEditBtns" style="display:none">
+      <button class="btn-cancel" id="storeEditCancel">취소</button>
+      <button class="btn-primary" id="storeEditSave">저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- 바코드 스캔 모달 -->
 <div class="modal-bg" id="scanModalBg">
   <div class="modal">
@@ -431,6 +464,14 @@ const DEFAULT_ZONES = [
   {id:'z5', name:'카운터 옆'},
   {id:'z6', name:'창고'}
 ];
+const DEFAULT_STORES = [
+  {id:'store1', name:'Orange Beauty'},
+  {id:'store2', name:'Golden Beauty'},
+  {id:'store3', name:'Auburn Beauty'}
+];
+let stores = DEFAULT_STORES.map(s=>({...s}));
+let currentStore = 'store1';
+try{ const s = localStorage.getItem('selectedStore'); if(s) currentStore = s; }catch(e){}
 let products = [];
 let zones = DEFAULT_ZONES.map(z=>({...z}));
 let currentUser = null;
@@ -496,19 +537,37 @@ function writeErrorMsg(e){
   return '저장에 실패했어요. 다시 시도해 주세요';
 }
 
-/* ───────── 서버 실시간 동기화 ───────── */
-onSnapshot(collection(db,'products'), snap => {
-  products = snap.docs.map(d=>({id:d.id, ...d.data()}));
-  loaded = true;
+/* ───────── 매장별 서버 실시간 동기화 ───────── */
+let storeUnsubs = [];
+function subscribeStore(id){
+  storeUnsubs.forEach(u=>{ try{u();}catch(e){} });
+  storeUnsubs = [];
+  products = []; zones = DEFAULT_ZONES.map(z=>({...z}));
+  loaded = false; selectedZone = null; currentCat = '전체'; searchLimit = 50; manageLimit = 50;
+  renderStoreHeader();
   rerender();
-}, err => { console.error(err); toast('서버 연결에 문제가 있어요'); });
-
-onSnapshot(doc(db,'meta','zones'), snap => {
-  if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
-    zones = snap.data().list;
-  }
-  rerender();
-}, err => { console.error(err); });
+  storeUnsubs.push(onSnapshot(collection(db,'stores',id,'products'), snap => {
+    products = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    loaded = true;
+    rerender();
+  }, err => { console.error(err); toast('서버 연결에 문제가 있어요'); }));
+  storeUnsubs.push(onSnapshot(doc(db,'stores',id,'meta','zones'), snap => {
+    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+      zones = snap.data().list;
+    }
+    rerender();
+  }, err => { console.error(err); }));
+}
+function storeName(id){ const s = stores.find(x=>x.id===(id||currentStore)); return s ? s.name : '매장'; }
+function renderStoreHeader(){
+  $('storeName').textContent = storeName();
+  document.title = storeName() + ' - 뷰티샵 도우미';
+}
+function setStore(id){
+  currentStore = id;
+  try{ localStorage.setItem('selectedStore', id); }catch(e){}
+  subscribeStore(id);
+}
 
 function activeTab(){
   const b = document.querySelector('nav button.on');
@@ -697,7 +756,7 @@ function renderManage(){
     if(!requireLogin()) return;
     const p = products.find(x=>x.id===b.dataset.del);
     if(p && confirm(`'${p.name}' 상품을 삭제할까요?`)){
-      try{ await deleteDoc(doc(db,'products',b.dataset.del)); toast('삭제했어요'); }
+      try{ await deleteDoc(doc(db,'stores',currentStore,'products',b.dataset.del)); toast('삭제했어요'); }
       catch(e){ toast(writeErrorMsg(e)); }
     }
   }));
@@ -743,7 +802,7 @@ $('productSave').addEventListener('click', async ()=>{
   };
   $('productSave').disabled = true;
   try{
-    await setDoc(doc(db,'products',id), item);
+    await setDoc(doc(db,'stores',currentStore,'products',id), item);
     toast(editingId ? '수정했어요' : '등록했어요');
     $('productModalBg').classList.remove('open');
   }catch(e){ toast(writeErrorMsg(e)); }
@@ -753,7 +812,7 @@ $('productSave').addEventListener('click', async ()=>{
 /* ───────── 구역 관리 ───────── */
 let zoneDraft = [];
 async function saveZones(list){
-  await setDoc(doc(db,'meta','zones'), { list });
+  await setDoc(doc(db,'stores',currentStore,'meta','zones'), { list });
 }
 $('zoneManageBtn').addEventListener('click', ()=>{
   if(!requireLogin()) return;
@@ -817,19 +876,19 @@ async function bulkWrite(zonesList, productList){
     const batch = writeBatch(db);
     productList.slice(i, i+CHUNK).forEach(p=>{
       const {id, ...rest} = p;
-      batch.set(doc(db,'products', id || uid()), rest);
+      batch.set(doc(db,'stores',currentStore,'products', id || uid()), rest);
     });
-    if(i === 0 && zonesList && zonesList.length) batch.set(doc(db,'meta','zones'), { list: zonesList });
+    if(i === 0 && zonesList && zonesList.length) batch.set(doc(db,'stores',currentStore,'meta','zones'), { list: zonesList });
     await batch.commit();
   }
 }
 
 $('exportBtn').addEventListener('click', ()=>{
-  const blob = new Blob([JSON.stringify({zones, products}, null, 2)], {type:'application/json'});
+  const blob = new Blob([JSON.stringify({store: storeName(), zones, products}, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   const d = new Date();
-  a.download = `beautyshop_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+  a.download = `${storeName().replace(/\s+/g,'_')}_backup_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
   toast('백업 파일을 저장했어요');
@@ -843,7 +902,7 @@ $('importFile').addEventListener('change', e=>{
     try{
       const parsed = JSON.parse(reader.result);
       if(!parsed.zones || !parsed.products) throw new Error('bad');
-      if(!confirm(`백업에 있는 상품 ${parsed.products.length}개를 서버에 올릴까요? 같은 상품은 백업 내용으로 바뀌어요.`)) return;
+      if(!confirm(`백업에 있는 상품 ${parsed.products.length}개를 '${storeName()}' 매장에 올릴까요? 같은 상품은 백업 내용으로 바뀌어요.`)) return;
       await bulkWrite(parsed.zones, parsed.products);
       toast('백업을 서버에 올렸어요');
     }catch(err){
@@ -857,7 +916,7 @@ $('migrateBtn').addEventListener('click', async ()=>{
   if(!requireLogin()) return;
   const d = legacyData();
   if(!d){ toast('옮길 데이터가 없어요'); return; }
-  if(!confirm(`이 기기에 저장돼 있던 상품 ${d.products.length}개를 서버로 올릴까요?`)) return;
+  if(!confirm(`이 기기에 저장돼 있던 상품 ${d.products.length}개를 '${storeName()}' 매장 서버로 올릴까요?`)) return;
   try{
     await bulkWrite(d.zones||[], d.products);
     localStorage.removeItem(LEGACY_KEY);
@@ -878,10 +937,10 @@ $('clearSampleBtn').addEventListener('click', async ()=>{
 });
 $('resetBtn').addEventListener('click', async ()=>{
   if(!requireLogin()) return;
-  if(confirm('정말 모든 상품과 구역을 지우고 처음 상태로 되돌릴까요?\n(백업 파일을 먼저 저장해 두는 것을 추천해요)')){
+  if(confirm(`정말 '${storeName()}' 매장의 모든 상품과 구역을 지우고 처음 상태로 되돌릴까요?\n(다른 매장 데이터는 그대로 남아요. 백업 파일을 먼저 저장해 두는 것을 추천해요)`)){
     try{
       await bulkDelete(products.map(p=>p.id));
-      await setDoc(doc(db,'meta','zones'), { list: DEFAULT_ZONES });
+      await setDoc(doc(db,'stores',currentStore,'meta','zones'), { list: DEFAULT_ZONES });
       selectedZone = null; currentCat = '전체';
       toast('초기화했어요');
     }catch(e){ toast(writeErrorMsg(e)); }
@@ -892,7 +951,7 @@ async function bulkDelete(ids){
   const CHUNK = 450;
   for(let i = 0; i < ids.length; i += CHUNK){
     const batch = writeBatch(db);
-    ids.slice(i, i+CHUNK).forEach(id=>batch.delete(doc(db,'products',id)));
+    ids.slice(i, i+CHUNK).forEach(id=>batch.delete(doc(db,'stores',currentStore,'products',id)));
     await batch.commit();
   }
 }
@@ -944,8 +1003,69 @@ $('scanFormBtn').addEventListener('click', ()=>openScan('form'));
 $('scanCancel').addEventListener('click', closeScan);
 $('scanModalBg').addEventListener('click', e=>{ if(e.target === $('scanModalBg')) closeScan(); });
 
+/* ───────── 매장 선택/관리 ───────── */
+let storeDraft = [], storeEditMode = false;
+function openStoreModal(){
+  storeEditMode = false;
+  renderStoreModal();
+  $('storeModalBg').classList.add('open');
+}
+function renderStoreModal(){
+  $('storeList').style.display = storeEditMode ? 'none' : 'block';
+  $('storeEditWrap').style.display = storeEditMode ? 'block' : 'none';
+  $('storeViewBtns').style.display = storeEditMode ? 'none' : 'flex';
+  $('storeEditBtns').style.display = storeEditMode ? 'flex' : 'none';
+  if(!storeEditMode){
+    $('storeList').innerHTML = stores.map(s=>
+      `<button class="store-btn ${s.id===currentStore?'on':''}" data-sid="${esc(s.id)}">🏬 ${esc(s.name)}${s.id===currentStore?' ✓':''}</button>`).join('');
+    $('storeList').querySelectorAll('[data-sid]').forEach(b=>b.addEventListener('click', ()=>{
+      const sid = b.dataset.sid;
+      $('storeModalBg').classList.remove('open');
+      if(sid !== currentStore){ setStore(sid); toast(storeName(sid) + ' 매장으로 바꿨어요'); }
+    }));
+  }else{
+    $('storeEditList').innerHTML = storeDraft.map((s,i)=>`
+      <div class="zone-edit-row"><input type="text" value="${esc(s.name)}" data-si="${i}" placeholder="매장 이름"></div>`).join('');
+    $('storeEditList').querySelectorAll('input').forEach(inp=>
+      inp.addEventListener('input', ()=>{ storeDraft[Number(inp.dataset.si)].name = inp.value; }));
+  }
+}
+$('storeBtn').addEventListener('click', openStoreModal);
+$('storeClose').addEventListener('click', ()=>$('storeModalBg').classList.remove('open'));
+$('storeEditBtn').addEventListener('click', ()=>{
+  if(!currentUser){ $('storeModalBg').classList.remove('open'); requireLogin(); return; }
+  storeDraft = stores.map(s=>({...s}));
+  storeEditMode = true;
+  renderStoreModal();
+});
+$('storeAddBtn').addEventListener('click', ()=>{
+  storeDraft.push({id:'store'+Math.random().toString(36).slice(2,8), name:'새 매장'});
+  renderStoreModal();
+});
+$('storeEditCancel').addEventListener('click', ()=>{ storeEditMode = false; renderStoreModal(); });
+$('storeEditSave').addEventListener('click', async ()=>{
+  if(!requireLogin()) return;
+  const cleaned = storeDraft.map(s=>({...s, name:s.name.trim()})).filter(s=>s.name);
+  if(!cleaned.length){ toast('매장이 최소 1개는 필요해요'); return; }
+  try{
+    await setDoc(doc(db,'meta','stores'), { list: cleaned });
+    storeEditMode = false;
+    $('storeModalBg').classList.remove('open');
+    toast('매장 목록을 저장했어요');
+  }catch(e){ toast(writeErrorMsg(e)); }
+});
+$('storeModalBg').addEventListener('click', e=>{ if(e.target === $('storeModalBg')) $('storeModalBg').classList.remove('open'); });
+
 /* ───────── 시작 ───────── */
-renderSearch();
+onSnapshot(doc(db,'meta','stores'), snap => {
+  if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+    stores = snap.data().list;
+    if(!stores.find(s=>s.id===currentStore)){ setStore(stores[0].id); return; }
+    renderStoreHeader();
+  }
+}, err => { console.error(err); });
+if(!stores.find(s=>s.id===currentStore)) currentStore = stores[0].id;
+subscribeStore(currentStore);
 
 </script>
 </body>
